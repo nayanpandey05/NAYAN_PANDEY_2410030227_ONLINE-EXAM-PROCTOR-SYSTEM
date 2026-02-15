@@ -56,7 +56,7 @@ def login_required(f):
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             flash('Please login to access this page', 'error')
-            return redirect(url_for('login_page'))
+            return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -66,7 +66,7 @@ def admin_required(f):
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             flash('Please login to access this page', 'error')
-            return redirect(url_for('login_page'))
+            return redirect(url_for('login'))
         user = users.find_one({"_id": ObjectId(session['user_id'])})
         if not user or user.get('role') != 'admin':
             flash('Admin access required', 'error')
@@ -75,7 +75,7 @@ def admin_required(f):
     return decorated_function
 
 @app.route("/")
-def login_page():
+def root():
     if 'user_id' in session:
         return redirect(url_for('exam'))
     return render_template("login.html")
@@ -91,16 +91,16 @@ def register():
             # Validation
             if not email or not password or not name:
                 flash("All fields are required", "error")
-                return render_template("register.html")
+                return redirect(url_for('register'))
             
             if len(password) < 6:
                 flash("Password must be at least 6 characters", "error")
-                return render_template("register.html")
+                return redirect(url_for('register'))
             
             # Check if user already exists
             if users.find_one({"email": email}):
                 flash("Email already registered", "error")
-                return render_template("register.html")
+                return redirect(url_for('register'))
             
             # Hash password
             hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
@@ -115,49 +115,51 @@ def register():
             })
             
             flash("Registration successful! Please login.", "success")
-            return redirect(url_for('login_page'))
+            return redirect(url_for('login'))
             
         except Exception as e:
             flash(f"Registration failed: {str(e)}", "error")
-            return render_template("register.html")
+            return redirect(url_for('register'))
     
     return render_template("register.html")
 
-@app.route("/login", methods=["POST"])
+@app.route("/login", methods=["POST","GET"])
 def login():
-    try:
-        email = request.form.get("email", "").strip()
-        password = request.form.get("password", "")
-        
-        if not email or not password:
-            flash("Email and password are required", "error")
-            return redirect(url_for('login_page'))
-        
-        user = users.find_one({"email": email})
-        
-        if user and bcrypt.checkpw(password.encode(), user["password"]):
-            session['user_id'] = str(user['_id'])
-            session['user_email'] = user['email']
-            session['user_name'] = user.get('name', 'Student')
-            session['user_role'] = user.get('role', 'student')
+    if request.method == "POST":
+        try:
+            email = request.form.get("email", "").strip()
+            password = request.form.get("password", "")
             
-            # Redirect based on role
-            if user.get('role') == 'admin':
-                return redirect(url_for('dashboard'))
-            return redirect(url_for('exam'))
-        
-        flash("Invalid email or password", "error")
-        return redirect(url_for('login_page'))
-        
-    except Exception as e:
-        flash(f"Login failed: {str(e)}", "error")
-        return redirect(url_for('login_page'))
+            if not email or not password:
+                flash("Email and password are required", "error")
+                return redirect(url_for('login'))
+            
+            user = users.find_one({"email": email})
+            
+            if user and bcrypt.checkpw(password.encode(), user["password"]):
+                session['user_id'] = str(user['_id'])
+                session['user_email'] = user['email']
+                session['user_name'] = user.get('name', 'Student')
+                session['user_role'] = user.get('role', 'student')
+                
+                # Redirect based on role
+                if user.get('role') == 'admin':
+                    return redirect(url_for('dashboard'))
+                return redirect(url_for('exam'))
+            
+            flash("Invalid email or password", "error")
+            return redirect(url_for('login'))
+            
+        except Exception as e:
+            flash(f"Login failed: {str(e)}", "error")
+            return redirect(url_for('login'))
+    return render_template("login.html")
 
 @app.route("/logout")
 def logout():
     session.clear()
     flash("Logged out successfully", "success")
-    return redirect(url_for('login_page'))
+    return redirect(url_for('login'))
 
 @app.route("/exam")
 @login_required
