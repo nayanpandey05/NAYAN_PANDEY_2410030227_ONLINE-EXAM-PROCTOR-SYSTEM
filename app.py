@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, redirect, session, f
 from database.mongo import users, violations, exam_sessions, exam_results
 from database.demo_user import create_demo_users
 from suspicious_score import get_session_score, get_violation_breakdown
+from utils.data import EXAM_QUESTIONS
 import bcrypt
 import datetime
 from functools import wraps
@@ -10,41 +11,6 @@ import os
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
-
-# Sample exam questions
-EXAM_QUESTIONS = [
-    {
-        "id": 1,
-        "question": "What is the time complexity of binary search?",
-        "options": ["O(n)", "O(log n)", "O(n²)", "O(1)"],
-        "correct": 1
-    },
-    {
-        "id": 2,
-        "question": "Which data structure uses LIFO principle?",
-        "options": ["Queue", "Stack", "Tree", "Graph"],
-        "correct": 1
-    },
-    {
-        "id": 3,
-        "question": "What does HTML stand for?",
-        "options": ["Hyper Text Markup Language", "High Tech Modern Language", 
-                   "Home Tool Markup Language", "Hyperlinks and Text Markup Language"],
-        "correct": 0
-    },
-    {
-        "id": 4,
-        "question": "Which of the following is not a programming language?",
-        "options": ["Python", "Java", "HTML", "C++"],
-        "correct": 2
-    },
-    {
-        "id": 5,
-        "question": "What is the result of 2 ** 3 in Python?",
-        "options": ["6", "8", "9", "5"],
-        "correct": 1
-    }
-]
 
 # Authentication decorator
 def login_required(f):
@@ -174,7 +140,7 @@ def exam():
                           questions=EXAM_QUESTIONS,
                           user_name=session.get('user_name'))
 
-@app.route("/violation", methods=["POST"])
+@app.post("/violation")
 @login_required
 def violation():
     try:
@@ -194,11 +160,11 @@ def violation():
         return jsonify({
             "status": "logged",
             "current_score": score
-        })
+        }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route("/submit_exam", methods=["POST"])
+@app.post("/submit_exam")
 @login_required
 def submit_exam():
     try:
@@ -247,7 +213,7 @@ def submit_exam():
             "exam_score": exam_score,
             "suspicious_score": suspicious_score,
             "violations": violation_breakdown
-        })
+        }), 200
         
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -282,7 +248,7 @@ def dashboard():
                           stats=stats,
                           recent_results=recent_results)
 
-@app.route("/api/get_questions")
+@app.get("/api/get_questions")
 @login_required
 def get_questions():
     return jsonify({"questions": EXAM_QUESTIONS})
