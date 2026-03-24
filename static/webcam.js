@@ -2,6 +2,111 @@
 
 let violationCount = 0;
 let webcamStream = null;
+let socket = null;
+let frameInterval = null;
+let isMonitoring = false;
+
+// Initialize WebSocket connection
+function initWebSocket() {
+  try {
+    socket = io();
+    
+    socket.on('connect', function(data) {
+      console.log('✓ Connected to proctoring system');
+      updateMonitorStatus('✓ Connected to proctoring system', 'success');
+      startFrameCapture();
+    });
+    
+    socket.on('disconnect', function() {
+      console.log('✗ Disconnected from proctoring system');
+      updateMonitorStatus('✗ Connection lost', 'error');
+      stopFrameCapture();
+    });
+    
+    socket.on('status', function(data) {
+      if (data.status === 'normal') {
+        updateMonitorStatus(`✓ ${data.message} (${data.face_count} face(s) detected)`, 'success');
+      }
+    });
+    
+    socket.on('violation', function(data) {
+      console.warn(`⚠️ Violation: ${data.type}`);
+      updateMonitorStatus(`⚠️ ${data.message}`, 'error');
+      
+      // Update violation count and log
+      violationCount++;
+      updateViolationCount();
+      addViolationToLog(data.type);
+      showWarning(data.type);
+    });
+    
+    socket.on('error', function(data) {
+      console.error('Socket error:', data.message);
+      updateMonitorStatus(`✗ ${data.message}`, 'error');
+    });
+    
+  } catch (error) {
+    console.error('WebSocket initialization error:', error);
+    updateMonitorStatus('✗ Failed to connect to proctoring system', 'error');
+  }
+}
+
+// Capture and send frames
+function captureFrame() {
+  if (!webcamStream || !socket || !socket.connected) {
+    return;
+  }
+  
+  try {
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    
+    if (!video || !canvas) {
+      return;
+    }
+    
+    const context = canvas.getContext('2d');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    
+    // Draw current frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Convert to base64
+    const frameData = canvas.toDataURL('image/jpeg', 0.8);
+    
+    // Send frame to server
+    socket.emit('frame', {
+      frame: frameData,
+      timestamp: Date.now()
+    });
+    
+  } catch (error) {
+    console.error('Frame capture error:', error);
+  }
+}
+
+// Start frame capture
+function startFrameCapture() {
+  if (isMonitoring) {
+    return;
+  }
+  
+  isMonitoring = true;
+  // Capture frames every 5 seconds (configurable)
+  frameInterval = setInterval(captureFrame, 5000);
+  console.log('✓ Started frame capture');
+}
+
+// Stop frame capture
+function stopFrameCapture() {
+  if (frameInterval) {
+    clearInterval(frameInterval);
+    frameInterval = null;
+  }
+  isMonitoring = false;
+  console.log('✗ Stopped frame capture');
+}
 
 // Initialize webcam
 async function initWebcam() {
@@ -12,7 +117,16 @@ async function initWebcam() {
       audio: false
     });
     video.srcObject = webcamStream;
-    console.log('✓ Webcam initialized');
+    
+    // Wait for video to load
+    video.onloadedmetadata = function() {
+      console.log('✓ Webcam initialized');
+      updateMonitorStatus('✓ Webcam initialized', 'success');
+      
+      // Initialize WebSocket after webcam is ready
+      initWebSocket();
+    };
+    
   } catch (error) {
     console.error('Webcam error:', error);
     alert('⚠️ Webcam access denied! The exam requires camera access for proctoring.');
@@ -162,8 +276,12 @@ if (document.getElementById('webcam')) {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
+  stopFrameCapture();
   if (webcamStream) {
     webcamStream.getTracks().forEach(track => track.stop());
+  }
+  if (socket) {
+    socket.disconnect();
   }
 });
 
