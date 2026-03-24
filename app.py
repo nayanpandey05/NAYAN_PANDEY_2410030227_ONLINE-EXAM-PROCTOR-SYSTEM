@@ -1,14 +1,10 @@
 from flask import Flask, render_template, request, jsonify, redirect, session, flash, url_for
 from flask_socketio import SocketIO, emit
-
-import base64
-import io
-import cv2
-import numpy as np
 from database.mongo import users, violations, exam_sessions, exam_results
 from database.demo_user import create_demo_users
 from suspicious_score import get_session_score, get_violation_breakdown
 from utils.data import EXAM_QUESTIONS
+from utils.websocket_handlers import handle_connect, handle_disconnect, handle_frame, handle_heartbeat
 import bcrypt
 import datetime
 from functools import wraps
@@ -17,7 +13,13 @@ import os
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Register WebSocket event handlers
+socketio.on_event('connect', handle_connect)
+socketio.on_event('disconnect', handle_disconnect)
+socketio.on_event('frame', handle_frame)
+socketio.on_event('heartbeat', handle_heartbeat)
 
 # Authentication decorator
 def login_required(f):
@@ -259,107 +261,6 @@ def dashboard():
 @login_required
 def get_questions():
     return jsonify({"questions": EXAM_QUESTIONS})
-
-# Face detection helper function
-def detect_faces_in_frame(frame_data):
-    """Detect faces in base64 encoded frame"""
-    try:
-        # Decode base64 image
-        image_data = base64.b64decode(frame_data.split(',')[1])
-        nparr = np.frombuffer(image_data, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if frame is None:
-            return 0, "Invalid frame"
-        
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Load face cascade
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        
-        # Detect faces
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-        
-        return len(faces), None
-        
-    except Exception as e:
-        return 0, str(e)
-
-# WebSocket event handlers
-@socketio.on('connect')
-def handle_connect():
-    print(f'Client connected: {request.sid}')
-    emit('status', {'message': 'Connected to proctoring system'})
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print(f'Client disconnected: {request.sid}')
-
-@socketio.on('frame')
-def handle_frame(data):
-    """Process video frame for face detection"""
-    try:
-        # Validate session
-        if 'user_id' not in session or 'exam_session_id' not in session:
-            emit('error', {'message': 'Invalid session'})
-            return
-        
-        # Detect faces
-        face_count, error = detect_faces_in_frame(data.get('frame', ''))
-        
-        if error:
-            emit('error', {'message': f'Frame processing error: {error}'})
-            return
-        
-        # Check for violations
-        user_id = session['user_id']
-        session_id = session['exam_session_id']
-        
-        if face_count == 0:
-            # Log face missing violation
-            violations.insert_one({
-                "type": "Face Missing",
-                "user_id": user_id,
-                "user_email": session.get('user_email', ''),
-                "session_id": session_id,
-                "time": datetime.datetime.now(),
-                "detected_via": "websocket"
-            })
-            emit('violation', {
-                'type': 'Face Missing',
-                'message': 'No face detected in camera feed',
-                'face_count': face_count
-            })
-            
-        elif face_count > 1:
-            # Log multiple faces violation
-            violations.insert_one({
-                "type": "Multiple Faces",
-                "user_id": user_id,
-                "user_email": session.get('user_email', ''),
-                "session_id": session_id,
-                "time": datetime.datetime.now(),
-                "detected_via": "websocket"
-            })
-            emit('violation', {
-                'type': 'Multiple Faces',
-                'message': f'Multiple faces detected: {face_count}',
-                'face_count': face_count
-            })
-        else:
-            # No violation - send status update
-            emit('status', {
-                'message': 'Face detected',
-                'face_count': face_count,
-                'status': 'normal'
-            })
-            
-    except Exception as e:
-        app.logger.error(f'Frame processing error: {str(e)}')
-        emit('error', {'message': 'Server error during frame processing'})
 
 if __name__ == "__main__":
     # Ensure upload folder exists
